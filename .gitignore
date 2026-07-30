@@ -116,6 +116,11 @@ plan/
 # Web — runtime cache/history the dashboard writes locally; nothing here is tracked.
 .career-ops-web/
 
+# Headed Playwright profile for the local application worker (may contain ATS sessions).
+.career-ops-browser-profile/
+data/auto-intake.log
+data/auto-intake-diagnostics/
+
 # Upgrade-test fixtures are fictional system-layer data, never user data
 # (see DATA_CONTRACT.md). Re-include them past the unanchored user-layer
 # patterns above (cv.md, portals.yml).

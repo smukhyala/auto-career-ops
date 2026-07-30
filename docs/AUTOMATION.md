@@ -103,6 +103,22 @@ Register-ScheduledTask -TaskName "career-ops scan" -Action $action -Trigger $tri
 After any of these, new postings land in `data/pipeline.md` under `## Pending` on
 each run. Next you decide which are worth your attention — cheaply.
 
+### Automatic, bounded intake
+
+For an opt-in scan → eligibility gate → liveness check → evaluation flow, run:
+
+```bash
+npm run intake
+```
+
+The per-user cap is `config/profile.yml` → `automation.max_auto_evaluations_per_scan` (5 in this workspace). The gate accepts internships, co-ops, and fellowships, plus founding roles only when their titles are engineering-adjacent. It verifies each selected posting before a bounded, evaluation-only worker runs. It never applies, fills forms, or submits anything.
+
+Preview the selected roles without opening postings or spending evaluation tokens:
+
+```bash
+npm run intake:dry-run
+```
+
 ---
 
 ## 2. Triage the queue

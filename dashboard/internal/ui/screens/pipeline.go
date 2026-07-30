@@ -92,6 +92,14 @@ type PipelineRefreshMsg struct{}
 // PipelineOpenProgressMsg is emitted when the progress screen should open.
 type PipelineOpenProgressMsg struct{}
 
+// PipelineOpenQueueMsg opens the local reviewed-application handoff queue.
+// Approvals in this queue may prepare a browser form, but never submit it.
+type PipelineOpenQueueMsg struct{}
+
+// PipelineOpenInboxMsg opens the scanner's pending-role inbox. These entries
+// are discovery leads, not tracker applications.
+type PipelineOpenInboxMsg struct{}
+
 var canonicalDiscardReasons = []string{
 	"salary_too_low",
 	"hybrid_required",
@@ -621,6 +629,12 @@ func (m PipelineModel) handleKey(msg tea.KeyMsg) (PipelineModel, tea.Cmd) {
 
 	case "p":
 		return m, func() tea.Msg { return PipelineOpenProgressMsg{} }
+
+	case "a":
+		return m, func() tea.Msg { return PipelineOpenQueueMsg{} }
+
+	case "i":
+		return m, func() tea.Msg { return PipelineOpenInboxMsg{} }
 
 	case "r":
 		return m, func() tea.Msg { return PipelineRefreshMsg{} }
@@ -1874,6 +1888,8 @@ func (m PipelineModel) renderHelp() string {
 		keyStyle.Render("C") + descStyle.Render(i18n.Current.HelpColumns) +
 		keyStyle.Render("v") + descStyle.Render(i18n.Current.HelpView) +
 		keyStyle.Render("p") + descStyle.Render(i18n.Current.HelpProgress) +
+		keyStyle.Render("a") + descStyle.Render(" applications") +
+		keyStyle.Render("i") + descStyle.Render(" inbox") +
 		keyStyle.Render("t") + descStyle.Render(i18n.Current.HelpLanguage) +
 		keyStyle.Render("m") + descStyle.Render(i18n.Current.HelpManifesto) +
 		keyStyle.Render("q") + descStyle.Render(i18n.Current.HelpQuit)

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/santifer/career-ops/dashboard/internal/applyworker"
 	"github.com/santifer/career-ops/dashboard/internal/data"
 	"github.com/santifer/career-ops/dashboard/internal/i18n"
 	"github.com/santifer/career-ops/dashboard/internal/model"
@@ -23,16 +26,39 @@ const (
 	viewPipeline viewState = iota
 	viewReport
 	viewProgress
+	viewQueue
+	viewInbox
 )
 
 type appModel struct {
 	pipeline        screens.PipelineModel
 	viewer          screens.ViewerModel
 	progress        screens.ProgressModel
+	queue           screens.QueueModel
+	inbox           screens.InboxModel
 	state           viewState
 	careerOpsPath   string
 	theme           theme.Theme
 	progressMetrics model.ProgressMetrics
+	applyWorker     *applyworker.Client
+}
+
+// QueueWorkerResultMsg is delivered after an approved worker handoff or a
+// receipt check. The worker process stays alive in appModel across both calls.
+type QueueWorkerResultMsg struct {
+	ID        string
+	State     string
+	Reason    string
+	ReceiptID string
+	Err       string
+}
+
+type workerResult struct {
+	State   string `json:"state"`
+	Reason  string `json:"reason"`
+	Receipt *struct {
+		ReceiptID *string `json:"receiptId"`
+	} `json:"receipt"`
 }
 
 func (m *appModel) reloadPipelineData() {
@@ -66,6 +92,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == viewProgress {
 			m.progress.Resize(msg.Width, msg.Height)
+		}
+		if m.state == viewQueue {
+			m.queue.Resize(msg.Width, msg.Height)
+		}
+		if m.state == viewInbox {
+			m.inbox.Resize(msg.Width, msg.Height)
 		}
 		pm, cmd := m.pipeline.Update(msg)
 		m.pipeline = pm
@@ -163,8 +195,118 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewProgress
 		return m, nil
 
+	case screens.PipelineOpenQueueMsg:
+		m.queue = screens.NewQueueModel(m.theme, m.careerOpsPath, m.pipeline.Width(), m.pipeline.Height())
+		m.state = viewQueue
+		return m, nil
+
+	case screens.PipelineOpenInboxMsg:
+		m.inbox = screens.NewInboxModel(m.theme, m.careerOpsPath, m.pipeline.Width(), m.pipeline.Height())
+		m.state = viewInbox
+		return m, nil
+
 	case screens.ProgressClosedMsg:
 		m.state = viewPipeline
+		return m, nil
+
+	case screens.QueueClosedMsg:
+		if m.applyWorker != nil {
+			_ = m.applyWorker.Close()
+			m.applyWorker = nil
+		}
+		m.state = viewPipeline
+		return m, nil
+
+	case screens.InboxClosedMsg:
+		m.state = viewPipeline
+		return m, nil
+
+	case screens.InboxRefreshMsg:
+		m.inbox.Reload()
+		return m, nil
+
+	case screens.InboxOpenURLMsg:
+		return m, openCmd(msg.URL)
+
+	case screens.QueueRefreshMsg:
+		m.queue.Reload()
+		return m, nil
+
+	case screens.QueueOpenURLMsg:
+		return m, openCmd(msg.URL)
+
+	case screens.QueueApproveMsg:
+		item, err := data.ApproveApplicationQueueItem(m.careerOpsPath, msg.ID, "dashboard", time.Now())
+		if err != nil {
+			m.queue.SetFlash("Approval blocked: " + err.Error())
+			m.queue.Reload()
+			return m, nil
+		}
+		if _, err := data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, data.QueueStatePreparing, "approved handoff started", time.Now()); err != nil {
+			m.queue.SetFlash("Could not start preparation: " + err.Error())
+			m.queue.Reload()
+			return m, nil
+		}
+		if m.applyWorker != nil {
+			_ = m.applyWorker.Close()
+		}
+		m.applyWorker, err = applyworker.Start(m.careerOpsPath)
+		if err != nil {
+			_, _ = data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, data.QueueStateNeedsUserAction, "could not start local browser worker", time.Now())
+			m.queue.SetFlash("Browser worker unavailable: " + err.Error())
+			m.applyWorker = nil
+			m.queue.Reload()
+			return m, nil
+		}
+		m.queue.Reload()
+		return m, runReviewedQueueItem(m.applyWorker, item)
+
+	case QueueWorkerResultMsg:
+		if msg.Err != "" {
+			_, _ = data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, data.QueueStateNeedsUserAction, msg.Err, time.Now())
+			m.queue.SetFlash("Application needs your attention: " + msg.Err)
+			m.queue.Reload()
+			return m, nil
+		}
+		switch msg.State {
+		case data.QueueStateReadyForUserSubmit:
+			_, err := data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, data.QueueStateReadyForUserSubmit, "form filled and handed off for visible review", time.Now())
+			if err != nil {
+				m.queue.SetFlash("Could not record handoff: " + err.Error())
+			} else {
+				m.queue.SetFlash("Form is open. Review it and click the employer's Submit button yourself; then press v here.")
+			}
+		case data.QueueStateSubmitted:
+			if err := confirmQueueSubmission(m.careerOpsPath, msg.ID, msg.ReceiptID); err != nil {
+				m.queue.SetFlash("Receipt found, but tracking update needs attention: " + err.Error())
+			} else {
+				m.queue.SetFlash("Receipt confirmed. Tracker is now Applied and follow-up cadence was seeded.")
+			}
+		default:
+			reason := msg.Reason
+			if reason == "" {
+				reason = "worker stopped before a verified handoff"
+			}
+			_, _ = data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, data.QueueStateNeedsUserAction, reason, time.Now())
+			m.queue.SetFlash("Application needs your attention: " + reason)
+		}
+		m.queue.Reload()
+		return m, nil
+
+	case screens.QueueVerifySubmissionMsg:
+		if m.applyWorker == nil {
+			m.queue.SetFlash("No retained browser session. Re-open the application and verify the employer receipt manually.")
+			return m, nil
+		}
+		return m, verifyQueueSubmission(m.applyWorker, msg.ID)
+
+	case screens.QueueMoveMsg:
+		if _, err := data.MoveApplicationQueueItem(m.careerOpsPath, msg.ID, msg.To, msg.Reason, time.Now()); err != nil {
+			m.queue.SetFlash("Queue action blocked: " + err.Error())
+		} else {
+			m.queue.SetFlash("Queue updated.")
+		}
+		m.queue.Reload()
 		return m, nil
 
 	case screens.PipelineOpenURLMsg:
@@ -185,6 +327,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewProgress {
 			pg, cmd := m.progress.Update(msg)
 			m.progress = pg
+			return m, cmd
+		}
+		if m.state == viewQueue {
+			qm, cmd := m.queue.Update(msg)
+			m.queue = qm
+			return m, cmd
+		}
+		if m.state == viewInbox {
+			im, cmd := m.inbox.Update(msg)
+			m.inbox = im
 			return m, cmd
 		}
 		pm, cmd := m.pipeline.Update(msg)
@@ -250,9 +402,80 @@ func (m appModel) View() string {
 		return m.viewer.View()
 	case viewProgress:
 		return m.progress.View()
+	case viewQueue:
+		return m.queue.View()
+	case viewInbox:
+		return m.inbox.View()
 	default:
 		return m.pipeline.View()
 	}
+}
+
+func runReviewedQueueItem(worker *applyworker.Client, item model.ApplicationQueueItem) tea.Cmd {
+	return func() tea.Msg {
+		response, err := worker.Request(item.ID, "run-reviewed", map[string]any{"item": item})
+		if err != nil {
+			return QueueWorkerResultMsg{ID: item.ID, Err: err.Error()}
+		}
+		var result workerResult
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			return QueueWorkerResultMsg{ID: item.ID, Err: "could not read browser worker response: " + err.Error()}
+		}
+		return QueueWorkerResultMsg{ID: item.ID, State: result.State, Reason: result.Reason}
+	}
+}
+
+func verifyQueueSubmission(worker *applyworker.Client, id string) tea.Cmd {
+	return func() tea.Msg {
+		response, err := worker.Request(id, "verify-submission", map[string]any{})
+		if err != nil {
+			return QueueWorkerResultMsg{ID: id, Err: err.Error()}
+		}
+		var result workerResult
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			return QueueWorkerResultMsg{ID: id, Err: "could not read receipt verification: " + err.Error()}
+		}
+		receiptID := "confirmation-page"
+		if result.Receipt != nil && result.Receipt.ReceiptID != nil && *result.Receipt.ReceiptID != "" {
+			receiptID = *result.Receipt.ReceiptID
+		}
+		return QueueWorkerResultMsg{ID: id, State: result.State, Reason: result.Reason, ReceiptID: receiptID}
+	}
+}
+
+// confirmQueueSubmission updates the canonical tracker only after the retained
+// worker has found an employer confirmation. The final status write continues
+// to use the existing locked CLI path rather than editing applications.md.
+func confirmQueueSubmission(careerOpsPath, queueID, receiptID string) error {
+	queue, err := data.LoadApplicationQueue(careerOpsPath)
+	if err != nil {
+		return err
+	}
+	var item *model.ApplicationQueueItem
+	for i := range queue.Items {
+		if queue.Items[i].ID == queueID {
+			item = &queue.Items[i]
+			break
+		}
+	}
+	if item == nil {
+		return fmt.Errorf("queue item %q no longer exists", queueID)
+	}
+	if item.ReportNumber == "" {
+		return fmt.Errorf("queue item has no report number")
+	}
+	status := exec.Command("node", "set-status.mjs", item.ReportNumber, "Applied", "--note", "Application receipt confirmed by local dashboard")
+	status.Dir = careerOpsPath
+	if output, err := status.CombinedOutput(); err != nil {
+		return fmt.Errorf("set Applied status: %s", summarizeCmdError(err, output))
+	}
+	seed := exec.Command("node", "followup-seed.mjs", item.ReportNumber, "--json")
+	seed.Dir = careerOpsPath
+	if output, err := seed.CombinedOutput(); err != nil {
+		return fmt.Errorf("seed follow-up: %s", summarizeCmdError(err, output))
+	}
+	_, err = data.ConfirmApplicationQueueSubmission(careerOpsPath, queueID, receiptID, time.Now())
+	return err
 }
 
 func main() {
