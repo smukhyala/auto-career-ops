@@ -103,20 +103,50 @@ Register-ScheduledTask -TaskName "career-ops scan" -Action $action -Trigger $tri
 After any of these, new postings land in `data/pipeline.md` under `## Pending` on
 each run. Next you decide which are worth your attention — cheaply.
 
-### Automatic, bounded intake
+### Daily internship discovery board
 
-For an opt-in scan → eligibility gate → liveness check → evaluation flow, run:
+For the daily unrestricted reverse-ATS sweep, configured-board scan, and
+deterministic internship ranking, run:
 
 ```bash
 npm run intake
 ```
 
-The per-user cap is `config/profile.yml` → `automation.max_auto_evaluations_per_scan` (5 in this workspace). The gate accepts internships, co-ops, and fellowships, plus founding roles only when their titles are engineering-adjacent. It verifies each selected posting before a bounded, evaluation-only worker runs. It never applies, fills forms, or submits anything.
+The lead store is `data/internship-leads.json`, separate from evaluated reports
+and the application tracker. It accepts only technical internships, co-ops,
+fellowships, and student programs; founding, senior, and ordinary full-time
+roles are excluded. Full JD evaluation is manual after you save a lead. The
+discovery flow never opens, fills, or submits an application.
 
 Preview the selected roles without opening postings or spending evaluation tokens:
 
 ```bash
-npm run intake:dry-run
+npm run leads:refresh
+```
+
+### This workspace: dashboard refresh + broader discovery
+
+The terminal dashboard now reloads its tracker and role inbox from local files
+every 30 seconds. It does not reach the network itself; the local scheduled
+worker is what refreshes the data. Install that worker on macOS with:
+
+```bash
+npm run intake:install-auto-refresh
+```
+
+It runs every day at 8:30am local time (and once immediately after installation).
+Every day it runs the unrestricted reverse-ATS sweep over a 120-day seasonal
+window (including undated ATS postings), plus the configured-company scan, then
+refreshes the ranked board. Scan history keeps this high-recall sweep
+incremental. Both paths honor `portals.yml` and the saved U.S./remote-U.S.
+policy. The terminal board can search, sort, open a posting, and move a lead
+through stages; it never opens an application form or submits anything.
+
+To run the complete discovery pass immediately instead of waiting for its next
+scheduled run:
+
+```bash
+npm run intake:discover
 ```
 
 ---

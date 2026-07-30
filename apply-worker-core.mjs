@@ -107,7 +107,14 @@ export class ApplyWorker {
 
   async prepare(payload) {
     const { job, page } = await this.visit(payload);
-    const fields = await extractFields(page);
+    let fields = await extractFields(page);
+    // Some ATS job pages reveal no fields until the candidate explicitly
+    // starts an application. This is permitted only for a deliberate stage or
+    // approved queue run; the helper excludes final submission controls.
+    if (fields.length === 0 && payload.openApplication === true) {
+      await openInitialApplication(page);
+      fields = await extractFields(page);
+    }
     return {
       status: 'prepared', state: 'ReadyForReview', ats: job.ats, url: typeof page.url === 'function' ? page.url() : job.applyUrl,
       fields, finalSubmitRequiresUser: true,
@@ -179,7 +186,7 @@ export class ApplyWorker {
     };
     const preflight = await this.preflight(payload);
     if (preflight.state !== 'ReadyForReview') return preflight;
-    const prepared = await this.prepare(payload);
+    const prepared = await this.prepare({ ...payload, openApplication: true });
     const answers = Array.isArray(payload?.snapshot?.payload?.answers) ? payload.snapshot.payload.answers : [];
     if (answers.length === 0) return {
       status: 'needs_user_action', state: 'NeedsUserAction', reason: 'reviewed_answers_missing',
@@ -241,7 +248,19 @@ async function defaultBrowserFactory({ profileDir, headless = false } = {}) {
   const { chromium } = await import('playwright');
   // Persistent, headed context deliberately keeps user-owned ATS sessions local.
   // No credentials or cookies are written to the queue, tracker, or worker output.
-  return chromium.launchPersistentContext(profileDir ?? '.career-ops-browser-profile', { headless });
+  const options = { headless };
+  try {
+    // Prefer the installed Chrome. It is more likely to work with ATS bot
+    // checks, carries the user's ordinary macOS browser permissions, and avoids
+    // the crashpad restriction that Chrome-for-Testing can hit in Codex shells.
+    return await chromium.launchPersistentContext(profileDir ?? '.career-ops-browser-profile', { ...options, channel: 'chrome' });
+  } catch (chromeError) {
+    try {
+      return await chromium.launchPersistentContext(profileDir ?? '.career-ops-browser-profile', options);
+    } catch (bundledError) {
+      throw new Error(`Could not start local Chrome for application staging: ${bundledError.message || chromeError.message}`);
+    }
+  }
 }
 
 async function inspectPage(page) {
@@ -256,6 +275,27 @@ async function inspectPage(page) {
       warnings,
     };
   })) ?? { blocked: null, warnings: [] };
+}
+
+async function openInitialApplication(page) {
+  if (typeof page.locator !== 'function') return false;
+  const candidates = page.locator('a, button, input[type="button"]');
+  // Evaluate the finite DOM collection once. Calling innerText on dozens of
+  // locators can wait at the Playwright default timeout for hidden Workday
+  // controls and make a staging request look hung.
+  const index = await candidates.evaluateAll((elements) => elements.slice(0, 80).findIndex((element) => {
+    const text = `${element.innerText || element.getAttribute('value') || ''}`.trim();
+    const type = (element.getAttribute('type') || '').toLowerCase();
+    return /^(apply|apply now|start application)$/i.test(text) && type !== 'submit';
+  })).catch(() => -1);
+  if (index >= 0) {
+    // "Apply" begins a form; it is not the final Submit/Send control. Do not
+    // use broad text matching that could activate a final application action.
+    await candidates.nth(index).click({ timeout: 5_000 });
+    await page.waitForTimeout(400).catch(() => {});
+    return true;
+  }
+  return false;
 }
 
 export async function extractFields(page) {

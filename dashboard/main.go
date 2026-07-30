@@ -43,6 +43,19 @@ type appModel struct {
 	applyWorker     *applyworker.Client
 }
 
+const dashboardRefreshInterval = 30 * time.Second
+
+// DashboardAutoRefreshMsg is deliberately filesystem-only: it reloads scan and
+// tracker state written by the local scheduled worker, but never starts network
+// scans or application actions from an open terminal.
+type DashboardAutoRefreshMsg struct{}
+
+func dashboardAutoRefreshCmd() tea.Cmd {
+	return tea.Tick(dashboardRefreshInterval, func(time.Time) tea.Msg {
+		return DashboardAutoRefreshMsg{}
+	})
+}
+
 // QueueWorkerResultMsg is delivered after an approved worker handoff or a
 // receipt check. The worker process stays alive in appModel across both calls.
 type QueueWorkerResultMsg struct {
@@ -51,6 +64,16 @@ type QueueWorkerResultMsg struct {
 	Reason    string
 	ReceiptID string
 	Err       string
+}
+
+func stageApplicationCmd(careerOpsPath string, app model.CareerApplication) tea.Cmd {
+	return func() tea.Msg {
+		output, err := exec.Command("node", "application-stage.mjs", app.ReportNumber).CombinedOutput()
+		if err != nil {
+			return screens.PipelineApplicationStageResultMsg{Err: summarizeCmdError(err, output)}
+		}
+		return screens.PipelineApplicationStageResultMsg{Message: "Application packet staged. Review it, then press y to prepare the form."}
+	}
 }
 
 type workerResult struct {
@@ -69,7 +92,7 @@ func (m *appModel) reloadPipelineData() {
 }
 
 func (m appModel) Init() tea.Cmd {
-	return nil
+	return dashboardAutoRefreshCmd()
 }
 
 // Update manages global app state and routes incoming messages to active screens.
@@ -85,6 +108,16 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case DashboardAutoRefreshMsg:
+		m.reloadPipelineData()
+		if m.state == viewInbox {
+			m.inbox.Reload()
+		}
+		if m.state == viewQueue {
+			m.queue.Reload()
+		}
+		return m, dashboardAutoRefreshCmd()
+
 	case tea.WindowSizeMsg:
 		m.pipeline.Resize(msg.Width, msg.Height)
 		if m.state == viewReport {
@@ -200,6 +233,19 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewQueue
 		return m, nil
 
+	case screens.PipelineStageApplicationMsg:
+		return m, stageApplicationCmd(m.careerOpsPath, msg.App)
+
+	case screens.PipelineApplicationStageResultMsg:
+		if msg.Err != "" {
+			m.pipeline.SetFlash("Could not stage application: " + msg.Err)
+			return m, nil
+		}
+		m.queue = screens.NewQueueModel(m.theme, m.careerOpsPath, m.pipeline.Width(), m.pipeline.Height())
+		m.queue.SetFlash(msg.Message)
+		m.state = viewQueue
+		return m, nil
+
 	case screens.PipelineOpenInboxMsg:
 		m.inbox = screens.NewInboxModel(m.theme, m.careerOpsPath, m.pipeline.Width(), m.pipeline.Height())
 		m.state = viewInbox
@@ -227,6 +273,19 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case screens.InboxOpenURLMsg:
 		return m, openCmd(msg.URL)
+
+	case screens.InboxMoveStageMsg:
+		return m, moveInternshipLeadCmd(m.careerOpsPath, msg.Selector, msg.Stage)
+
+	case InternshipLeadMovedMsg:
+		if msg.Err != "" {
+			m.inbox.SetFlash("Could not update lead: " + msg.Err)
+		} else {
+			m.inbox.SetFlash("Lead moved to " + msg.Stage + ".")
+		}
+		m.inbox.Reload()
+		m.reloadPipelineData()
+		return m, nil
 
 	case screens.QueueRefreshMsg:
 		m.queue.Reload()
@@ -345,6 +404,23 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+type InternshipLeadMovedMsg struct {
+	Stage string
+	Err   string
+}
+
+func moveInternshipLeadCmd(careerOpsPath, selector, stage string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("node", "internship-leads.mjs", "move", selector, stage, "--json")
+		cmd.Dir = careerOpsPath
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return InternshipLeadMovedMsg{Stage: stage, Err: summarizeCmdError(err, output)}
+		}
+		return InternshipLeadMovedMsg{Stage: stage}
+	}
+}
+
 // openCmd wraps openWithDefaultApp (OS-specific) as a tea.Cmd. Shared by the
 // job-URL (`o`) and CV-PDF (`d`) actions.
 func openCmd(target string) tea.Cmd {
@@ -390,6 +466,9 @@ func summarizeCmdError(err error, out []byte) string {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if line := strings.TrimSpace(lines[i]); line != "" {
+			if strings.HasPrefix(line, "Node.js v") || strings.HasPrefix(line, "at async ") || strings.HasPrefix(line, "at ") {
+				continue
+			}
 			return line
 		}
 	}

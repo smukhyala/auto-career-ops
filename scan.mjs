@@ -64,6 +64,7 @@ const PORTALS_PATH = process.env.CAREER_OPS_PORTALS || 'portals.yml';
 const PROFILE_PATH = process.env.CAREER_OPS_PROFILE || 'config/profile.yml';
 const SCAN_HISTORY_PATH = 'data/scan-history.tsv';
 const PIPELINE_PATH = 'data/pipeline.md';
+const SCAN_DETAILS_PATH = 'data/scan-details.json';
 const APPLICATIONS_PATH = 'data/applications.md';
 const PROVIDERS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'providers');
 
@@ -1466,6 +1467,49 @@ Paste job URLs below as \`- [ ] {url}\` then run \`/career-ops pipeline\`.
 const PENDING_MARKERS = ['## Pending', '## Pendientes'];
 const PROCESSED_MARKERS = ['## Processed', '## Procesadas'];
 
+// The Markdown pipeline intentionally remains a compact, human-editable inbox.
+// Keep the fuller posting text in a local sidecar so the terminal dashboard can
+// explain the highlighted role without a second network request. This file is
+// under data/ (the user layer / gitignored) and is bounded to avoid becoming an
+// unbounded archive of third-party job descriptions.
+function normalizeScanDescription(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+}
+
+function updateScanDetails(offers) {
+  let details = {};
+  if (existsSync(SCAN_DETAILS_PATH)) {
+    try {
+      const parsed = JSON.parse(readFileSync(SCAN_DETAILS_PATH, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) details = parsed;
+    } catch {
+      // Treat a malformed optional cache as empty; the canonical pipeline is
+      // unaffected and this scan will rebuild entries for its new offers.
+    }
+  }
+  for (const offer of offers) {
+    const url = normalizeScanUrl(offer.url);
+    if (!url) continue;
+    details[url] = {
+      source: normalizeScanScalar(offer.source).slice(0, 120),
+      description: normalizeScanDescription(offer.description),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  const newest = Object.entries(details)
+    .sort(([, a], [, b]) => String(b?.updatedAt ?? '').localeCompare(String(a?.updatedAt ?? '')))
+    .slice(0, 1500);
+  writeFileSync(SCAN_DETAILS_PATH, `${JSON.stringify(Object.fromEntries(newest), null, 2)}\n`, 'utf8');
+}
+
+// Refresh the dashboard detail cache even when a URL is already in the
+// pipeline. Sharing the pipeline lock prevents concurrent scheduled/manual
+// scans from overwriting each other's cached descriptions.
+export async function appendScanDetails(offers) {
+  if (offers.length === 0) return;
+  await withPipelineLock(PIPELINE_PATH, async () => updateScanDetails(offers));
+}
+
 // Locked (pipeline-lock.mjs) so scan.mjs, scan-ats-full.mjs, and plugins.mjs
 // (pipeline mode) — the three current callers — can never interleave their
 // read-modify-write and silently drop each other's offers.
@@ -1976,6 +2020,7 @@ async function main() {
   let totalFilteredVisa = 0;
   let totalDupes = 0;
   const newOffers = [];
+  const scannedRoleDetails = [];
   const errors = [...resolveErrors];
   const emptyTargets = [];
 
@@ -2070,6 +2115,9 @@ async function main() {
           totalFilteredVisa++;
           continue;
         }
+        // This is after all scan filters, but before deduplication: a later
+        // scan can hydrate the terminal detail pane for existing inbox rows.
+        scannedRoleDetails.push({ ...job, source: sourceName });
         const dedupUrl = normalizeUrlForDedup(job.url);
         if (seenUrls.has(dedupUrl)) {
           totalDupes++;
@@ -2148,6 +2196,9 @@ async function main() {
   if (!dryRun && verifiedOffers.length > 0) {
     await appendToPipeline(verifiedOffers);
     appendToScanHistory(verifiedOffers, date);
+  }
+  if (!dryRun && scannedRoleDetails.length > 0) {
+    await appendScanDetails(scannedRoleDetails);
   }
   if (!dryRun && cooldownOffers.length > 0) {
     const cooldownGroups = {};

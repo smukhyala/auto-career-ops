@@ -1,11 +1,9 @@
-/** Deterministic, zero-token gate for automatic evaluation intake. */
+/** Legacy compatibility helpers. Automatic evaluation is retired; the strict
+ * internship classifier remains exported for older callers and tests. */
+import { classifyInternshipEligibility } from './internship-leads-core.mjs';
 
 const INTERN_RE = /\b(intern(?:ship)?|co[ -]?op|fellow(?:ship)?)\b/i;
 const INTERN_ADJACENT_RE = /\b(engineer(?:ing)?|software|developer|product|platform|technical|ai|ml|machine learning|data|infrastructure|systems?|robotics?|autonomy|research)\b/i;
-const FOUNDING_RE = /\bfounding\b/i;
-const FOUNDING_ADJACENT_RE = /\b(engineer(?:ing)?|software|developer|product|platform|technical|ai|ml|machine learning|data|infrastructure|systems?)\b/i;
-const EXCLUDED_RE = /\b(senior|staff|principal|director|vice president|vp\.?|head of|chief|manager|sales|marketing|operations|recruit(?:er|ing)?|human resources|account executive|customer success)\b/i;
-const FOUNDING_NONTECH_RE = /\b(sales|marketing|operations|recruit(?:er|ing)?|human resources|account executive|customer success|finance)\b/i;
 
 export function parsePendingRoles(markdown) {
   return markdown.split(/\r?\n/).flatMap((line) => {
@@ -21,13 +19,10 @@ export function parsePendingRoles(markdown) {
 }
 
 export function classifyEligibility(role) {
-  const title = role.role ?? '';
-  if (INTERN_RE.test(title) && INTERN_ADJACENT_RE.test(title)) return { eligible: true, kind: 'internship', reason: 'technical_internship_or_fellowship_title' };
-  if (FOUNDING_RE.test(title) && FOUNDING_ADJACENT_RE.test(title) && !FOUNDING_NONTECH_RE.test(title)) {
-    return { eligible: true, kind: 'founding', reason: 'founding_engineering_adjacent_title' };
-  }
-  if (EXCLUDED_RE.test(title)) return { eligible: false, reason: 'senior_or_non_builder_title' };
-  return { eligible: false, reason: 'outside_internship_or_founding_engineering_scope' };
+  const classified = classifyInternshipEligibility(role);
+  return classified.eligible
+    ? { eligible: true, kind: 'internship', reason: 'technical_internship_or_fellowship_title' }
+    : { eligible: false, reason: classified.reason };
 }
 
 function postedRank(posted) {
@@ -41,7 +36,7 @@ export function selectAutoIntakeCandidates(roles, limit = 5, { preferredCompanie
     .map((role) => ({ ...role, eligibility: classifyEligibility(role) }))
     .filter((role) => role.eligibility.eligible)
     .sort((a, b) => {
-      const score = (role) => (role.eligibility.kind === 'internship' ? 100 : 90)
+      const score = (role) => (role.eligibility.kind === 'internship' ? 100 : 0)
         + (preferred.has(role.company.toLowerCase()) ? 25 : 0)
         + (INTERN_ADJACENT_RE.test(role.role) ? 10 : 0);
       return score(b) - score(a) || postedRank(b.posted) - postedRank(a.posted) || a.company.localeCompare(b.company);

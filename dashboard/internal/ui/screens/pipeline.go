@@ -100,6 +100,14 @@ type PipelineOpenQueueMsg struct{}
 // are discovery leads, not tracker applications.
 type PipelineOpenInboxMsg struct{}
 
+// PipelineStageApplicationMsg asks the main program to create a reviewed,
+// local browser-handoff packet for the selected evaluated role.
+type PipelineStageApplicationMsg struct{ App model.CareerApplication }
+type PipelineApplicationStageResultMsg struct {
+	Err     string
+	Message string
+}
+
 var canonicalDiscardReasons = []string{
 	"salary_too_low",
 	"hybrid_required",
@@ -313,6 +321,10 @@ func (m PipelineModel) Width() int { return m.width }
 
 // Height returns the current height.
 func (m PipelineModel) Height() int { return m.height }
+
+// SetFlash lets asynchronous commands report a concise result after control
+// has returned to the tracker screen.
+func (m *PipelineModel) SetFlash(value string) { m.flash = value }
 
 // CopyReportCache copies the report cache from another pipeline model.
 func (m *PipelineModel) CopyReportCache(other *PipelineModel) {
@@ -632,6 +644,20 @@ func (m PipelineModel) handleKey(msg tea.KeyMsg) (PipelineModel, tea.Cmd) {
 
 	case "a":
 		return m, func() tea.Msg { return PipelineOpenQueueMsg{} }
+
+	case "A":
+		if app, ok := m.CurrentApp(); ok {
+			if app.ReportNumber == "" || app.ReportPath == "" {
+				m.flash = "Evaluate this role before staging an application"
+				return m, nil
+			}
+			if data.NormalizeStatus(app.Status) != "evaluated" {
+				m.flash = "Only evaluated roles can be staged for application"
+				return m, nil
+			}
+			m.flash = "Inspecting the employer form and building a review packet..."
+			return m, func() tea.Msg { return PipelineStageApplicationMsg{App: app} }
+		}
 
 	case "i":
 		return m, func() tea.Msg { return PipelineOpenInboxMsg{} }
@@ -1740,6 +1766,8 @@ func (m PipelineModel) renderPreview() string {
 	labelStyle := lipgloss.NewStyle().Foreground(m.theme.Sky).Bold(true)
 	valueStyle := lipgloss.NewStyle().Foreground(m.theme.Text)
 	dimStyle := lipgloss.NewStyle().Foreground(m.theme.Subtext)
+	selectedTitle := fmt.Sprintf("Selected role: %s — %s", app.Company, app.Role)
+	lines = append(lines, padStyle.Render(labelStyle.Render(truncateRunes(selectedTitle, m.width-6))))
 
 	// Quick facts derived from notes — available even when there is no report,
 	// and the only place narrow terminals see location/pay/last-contact.
@@ -1780,7 +1808,7 @@ func (m PipelineModel) renderPreview() string {
 		}
 		if summary.tldr != "" {
 			lines = append(lines, padStyle.Render(
-				labelStyle.Render("TL;DR: ")+valueStyle.Render(summary.tldr)))
+				labelStyle.Render("Evaluation TL;DR: ")+valueStyle.Render(summary.tldr)))
 		}
 		if summary.comp != "" {
 			lines = append(lines, padStyle.Render(
@@ -1889,6 +1917,7 @@ func (m PipelineModel) renderHelp() string {
 		keyStyle.Render("v") + descStyle.Render(i18n.Current.HelpView) +
 		keyStyle.Render("p") + descStyle.Render(i18n.Current.HelpProgress) +
 		keyStyle.Render("a") + descStyle.Render(" applications") +
+		keyStyle.Render("A") + descStyle.Render(" stage selected") +
 		keyStyle.Render("i") + descStyle.Render(" inbox") +
 		keyStyle.Render("t") + descStyle.Render(i18n.Current.HelpLanguage) +
 		keyStyle.Render("m") + descStyle.Render(i18n.Current.HelpManifesto) +

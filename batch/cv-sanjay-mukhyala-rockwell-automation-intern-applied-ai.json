@@ -1,0 +1,33 @@
+{
+  "lang": "en",
+  "page_format": "letter",
+  "candidate": {
+    "name": "Sanjay Mukhyala",
+    "phone": "+1-650-279-8516",
+    "email": "smukhyala@gmail.com",
+    "linkedin": { "url": "https://www.linkedin.com/in/sanjay-mukhyala-559423272/", "display": "linkedin.com/in/sanjay-mukhyala-559423272" },
+    "github": { "url": "https://github.com/smukhyala", "display": "github.com/smukhyala" },
+    "portfolio": { "url": "https://sanjay-mukhyala.com/", "display": "sanjay-mukhyala.com" },
+    "location": "Foster City, CA"
+  },
+  "summary": "UC Berkeley applied AI engineer with a foundation in machine learning and deep learning, plus hands-on Python, PyTorch, TensorFlow, AWS, and full-stack product delivery. Built and evaluated reliable AI systems: reduced LLM-agent benchmarking cost by 63% at SAIL, improved ITSM-agent reliability to 95% at Zendesk, and reduced enterprise retrieval time by 85% at Prologis. Brings rigorous evaluation, data-system integration, and workflow design to applied AI products.",
+  "competencies": ["Applied AI Systems", "Machine Learning & Deep Learning", "Python & Java", "PyTorch & TensorFlow", "AI System Evaluation", "AWS & Data Systems", "Full-Stack Product Development", "Data Analysis & Experimentation"],
+  "experience": [
+    { "company": "Prologis", "role": "Global Strategy Analytics Intern", "location": "San Francisco, CA", "dates": "May 2026 - Present", "bullets": ["Led development of an enterprise RAG platform integrating Dataiku, Snowflake, and OpenAI for citation-backed querying.", "Designed product workflows for unified qualitative and quantitative search, improving access to two retrieval engines.", "Consolidated 1,000+ fragmented documents into a scalable knowledge system, reducing information-retrieval time by 85%."] },
+    { "company": "Statistical Artificial Intelligence Lab (SAIL)", "role": "Research Assistant", "location": "Berkeley, CA", "dates": "March 2026 - Present", "bullets": ["Designed an adaptive evaluation framework for LLM agents, reducing benchmarking cost by 63% through statistical guiding.", "Benchmarked 20+ cold-start prompt strategies across WebArena tasks and identified high-performing configurations 3x faster.", "Implemented adaptive resource allocation that reduced evaluation runtime by 32% by prioritizing informative evaluations."] },
+    { "company": "Zendesk", "role": "Contract Software Engineer", "location": "San Francisco, CA", "dates": "February 2026 - May 2026", "bullets": ["Improved reliability to 95% by designing and benchmarking ITSM-agent architectures for uncertain tasks.", "Evaluated 100+ tickets by building frameworks that measured reasoning quality, hallucinations, and action accuracy.", "Reduced hallucinations and unsafe tool use by about 27% through evidence-based capability firewalls and mitigation systems."] },
+    { "company": "Breefly", "role": "Co-Founder and Head of Product", "location": "Berkeley, CA", "dates": "August 2025 - February 2026", "bullets": ["Developed multi-stage LLM analysis with sub-two-second transcript retrieval from long-form videos through indexing.", "Reduced repeat-access latency by about 95% using Redis caching, Celery task orchestration, and WebSocket streams."] }
+  ],
+  "projects": [
+    { "name": "Poker Sandbox", "tech": "Random Forest regression, supervised feature vectors", "description": "Built a simulation-driven poker-strategy lab using Random Forest expected-value regression, supervised feature vectors, natural-language strategy compilation, and leak detection for custom agents." },
+    { "name": "Cortex", "tech": "MCP, semantic search, AI memory graph", "description": "Designed an AI memory graph with 93% accurate retrieval and conflict resolution across multiple chat-agent histories." },
+    { "name": "Oasis", "tech": "Voice agents, pgvector, PostgreSQL, AWS", "description": "Deployed a multi-tenant AI-interview platform with real-time voice agents, semantic candidate retrieval, and telemetry scoring." }
+  ],
+  "education": [{ "title": "B.A. candidate, Data Science, Applied Mathematics, and Statistics", "org": "University of California, Berkeley", "year": "Expected May 2028 | GPA: 3.88", "description": "Relevant coursework: Data Structures and Algorithms, Machine Learning, Deep Learning, Artificial Intelligence, Database Systems, Numerical Analysis." }],
+  "skills": [
+    { "category": "Languages", "items": "Python, SQL, Java" },
+    { "category": "Machine Learning", "items": "PyTorch, TensorFlow, data analysis, agent evaluation" },
+    { "category": "AI & Data Systems", "items": "LLM and RAG systems, Dataiku, Snowflake, AWS, PostgreSQL, pgvector" },
+    { "category": "Product Engineering", "items": "full-stack development, Redis, Celery, WebSockets, MCP, semantic search" }
+  ]
+}
